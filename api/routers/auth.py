@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException
 from api.supabase_client import supabase
-from schemas.auth import User
+from api.schemas.auth import User
 
 router = APIRouter()
 
