@@ -1,6 +1,6 @@
 from fastapi import HTTPException, Header
 from typing import Optional
-from supabase_client import supabase
+from api.supabase_client import supabase
 
 # Dependency to get current user from Supabase token
 def get_current_user(authorization: Optional[str] = Header(None)):

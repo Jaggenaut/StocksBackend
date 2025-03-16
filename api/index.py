@@ -1,6 +1,6 @@
 from fastapi import FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
-from routers import auth, invesments, overlap, sector_allocation
+from api.routers import auth, invesments, overlap, sector_allocation
 
 # Initialize the app
 app = FastAPI()
