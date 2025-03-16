@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException
 from typing import List, Dict
-from utils import get_current_user
+from api.utils import get_current_user
 from api.supabase_client import supabase
 
 router = APIRouter()
