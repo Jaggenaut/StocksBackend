@@ -1,6 +1,6 @@
 from fastapi import FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
-from api.routers import auth, invesments, overlap, sector_allocation
+from api.routers import auth, invesments, overlap, sector_allocation, summary
 
 # Initialize the app
 app = FastAPI()
@@ -19,6 +19,7 @@ app.include_router(auth.router)
 app.include_router(invesments.router)
 app.include_router(overlap.router)
 app.include_router(sector_allocation.router)
+app.include_router(summary.router)
 
 @app.get('/')
 def root():
