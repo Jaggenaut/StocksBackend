@@ -10,5 +10,4 @@ def get_current_user(authorization: Optional[str] = Header(None)):
     user = supabase.auth.get_user(token)
     if not user:
         raise HTTPException(status_code=401, detail="Invalid token")
-    print(user, "here it is")
     return user.user.id
