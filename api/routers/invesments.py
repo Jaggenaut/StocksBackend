@@ -7,8 +7,13 @@ router = APIRouter()
 @router.get('/investment')
 def investments(user_id: str = Depends(get_current_user)):
     try:
-        response = supabase.from_("investments").select("*").eq("user_id", user_id).execute()
-        
+        response = (
+            supabase.from_("investments")
+            .select("*, mutual_funds(name)")
+            .eq("user_id", user_id)
+            .execute()
+        )
+
         if response.data:
             return {"status": "success", "data": response.data}
         else:
