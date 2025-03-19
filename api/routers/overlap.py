@@ -18,22 +18,29 @@ def get_stock_overlap(user_id: str = Depends(get_current_user)):
         fund_ids = [inv['fund_id'] for inv in investments]
 
         # Fetch stock allocations for these funds
-        allocations_resp = supabase.from_("stock_allocations").select("fund_id, stock, percentage").in_("fund_id", fund_ids).execute()
+        allocations_resp = supabase.from_("stock_allocations").select("fund_id, stock_id, percentage").in_("fund_id", fund_ids).execute()
         stock_allocations = allocations_resp.data
 
         # Fetch mutual fund names
         funds_resp = supabase.from_("mutual_funds").select("id, name").in_("id", fund_ids).execute()
         funds = {fund['id']: fund['name'] for fund in funds_resp.data}
 
+        # Fetch stock names
+        stock_ids = list({alloc['stock_id'] for alloc in stock_allocations})
+        stock_resp = supabase.from_("stocks").select("id, name").in_("id", stock_ids).execute()
+        stocks = {s['id']: s['name'] for s in stock_resp.data}
+
         # Prepare overlap data
         overlap_data: Dict[str, List[Dict[str, Any]]] = {}
 
         for allocation in stock_allocations:
             fund_name = funds.get(allocation['fund_id'], "Unknown Fund")
+            stock_name = stocks.get(allocation['stock_id'], "Unknown Stock")
+
             if fund_name not in overlap_data:
                 overlap_data[fund_name] = []
             overlap_data[fund_name].append({
-                "stock": allocation['stock'],
+                "stock": stock_name,
                 "allocation_percentage": allocation['percentage']
             })
 
@@ -59,7 +66,7 @@ def get_stock_overlap(user_id: str = Depends(get_current_user)):
                 })
 
         return {"status": "success", "data": {"nodes": nodes, "links": links}}
-    
+
     except HTTPException as http_err:
         raise http_err  # Forward known HTTP exceptions
     except Exception as e:

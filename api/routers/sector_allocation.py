@@ -1,88 +1,100 @@
 from fastapi import APIRouter, Depends, HTTPException
-from typing import List, Dict
-from api.utils import get_current_user
 from api.supabase_client import supabase
+from api.utils import get_current_user
+from collections import defaultdict
 
 router = APIRouter()
 
-def calculate_sector_allocation(investments: List[Dict[str, any]]) -> List[Dict]:
-    sector_totals = {}
-    stock_contributions = {}
-    total_investment = 0
-
-    fund_ids = [inv['fund_id'] for inv in investments]
-
-    # Fetch all sector allocations
-    sector_resp = supabase.from_("sector_allocations").select("fund_id, sector, percentage").in_("fund_id", fund_ids).execute()
-    sector_allocations = sector_resp.data or []
-
-    # Fetch all stock allocations
-    stocks_resp = supabase.from_("stock_allocations").select("fund_id, stock, percentage").in_("fund_id", fund_ids).execute()
-    stock_allocations = stocks_resp.data or []
-
-    # Ensure all sectors are included even if no investment is found
-    all_sectors = {alloc['sector'] for alloc in sector_allocations}
-
-    for investment in investments:
-        investment_amount = investment['amount']
-        fund_id = investment['fund_id']
-
-        # Get all sector allocations for this fund
-        relevant_sectors = [alloc for alloc in sector_allocations if alloc['fund_id'] == fund_id]
-
-        for sector_alloc in relevant_sectors:
-            sector = sector_alloc['sector']
-            sector_percentage = sector_alloc['percentage']
-            sector_amount = (sector_percentage / 100) * investment_amount
-
-            # Track total amount per sector
-            sector_totals[sector] = sector_totals.get(sector, 0) + sector_amount
-            total_investment += sector_amount
-
-            # Track stock contributions
-            relevant_stocks = [stock for stock in stock_allocations if stock['fund_id'] == fund_id]
-            for stock_alloc in relevant_stocks:
-                stock = stock_alloc['stock']
-                stock_percentage = stock_alloc['percentage']
-                stock_amount = (stock_percentage / 100) * sector_amount
-
-                stock_contributions.setdefault(sector, {})
-                stock_contributions[sector][stock] = stock_contributions[sector].get(stock, 0) + stock_amount
-
-    # Ensure all sectors appear in the result
-    result = []
-    for sector in all_sectors:
-        amount = sector_totals.get(sector, 0)
-        sector_percentage = (amount / total_investment) * 100 if total_investment > 0 else 0
-
-        stocks = [
-            {
-                "stock": stock,
-                "amount": round(stock_amount, 2),
-                "percentage": round((stock_amount / amount) * 100, 2) if amount > 0 else 0
-            }
-            for stock, stock_amount in stock_contributions.get(sector, {}).items()
-        ]
-
-        result.append({
-            "sector": sector,
-            "amount": round(amount, 2),
-            "percentage": round(sector_percentage, 2),
-            "stocks": sorted(stocks, key=lambda x: x['percentage'], reverse=True)
-        })
-
-    return sorted(result, key=lambda x: x['percentage'], reverse=True)
-
 @router.get("/sector-allocation")
-def get_sector_allocation(user_id: str = Depends(get_current_user)):
+def investment_breakdown(user_id: str = Depends(get_current_user)):
     try:
-        investments_resp = supabase.from_("investments").select("fund_id, amount").eq("user_id", user_id).execute()
-        investments = investments_resp.data or []
-
+        # Fetch all user investments
+        response = (
+            supabase.table("investments")
+            .select("fund_id, amount")
+            .eq("user_id", user_id)
+            .execute()
+        )
+        investments = response.data
         if not investments:
-            return {"status": "error", "message": "No investments found for this user."}
-
-        allocation_data = calculate_sector_allocation(investments)
-        return {"status": "success", "data": allocation_data}
+            raise HTTPException(status_code=404, detail="No investments found for this user.")
+        
+        # Fetch sector allocations with sector names
+        sector_response = (
+            supabase.table("sector_allocations")
+            .select("fund_id, sector_id, sectors(name), percentage")
+            .execute()
+        )
+        sector_allocations = sector_response.data
+        
+        # Fetch stock allocations with stock names
+        stock_response = (
+            supabase.table("stock_allocations")
+            .select("fund_id, stock_id, stocks(name), percentage")
+            .execute()
+        )
+        stock_allocations = stock_response.data
+        
+        # Fetch sector-stock mappings
+        sector_stocks_response = (
+            supabase.table("sector_stocks")
+            .select("sector_id, stock_id")
+            .execute()
+        )
+        sector_stocks = sector_stocks_response.data
+        
+        # Calculate total investment
+        total_investment = sum(inv["amount"] for inv in investments)
+        
+        # Calculate sector-wise investment
+        sector_investments = defaultdict(lambda: {"total_investment": 0, "investment_percentage": 0, "stocks": defaultdict(lambda: {"amount": 0, "percentage": 0})})
+        
+        for inv in investments:
+            fund_id = inv["fund_id"]
+            fund_amount = inv["amount"]
+            
+            # Allocate amount into sectors
+            for sector in sector_allocations:
+                if sector["fund_id"] == fund_id:
+                    sector_id = sector["sector_id"]
+                    sector_name = sector["sectors"]["name"]
+                    sector_percentage = sector["percentage"] / 100
+                    sector_amount = fund_amount * sector_percentage
+                    sector_investments[sector_name]["total_investment"] += sector_amount
+                    
+                    # Allocate amount into stocks within that sector
+                    for stock in stock_allocations:
+                        if stock["fund_id"] == fund_id:
+                            stock_id = stock["stock_id"]
+                            stock_name = stock["stocks"]["name"]
+                            stock_percentage = stock["percentage"] / 100
+                            stock_amount = fund_amount * stock_percentage
+                            
+                            # Ensure the stock belongs to the sector
+                            if any(s["sector_id"] == sector_id and s["stock_id"] == stock_id for s in sector_stocks):
+                                sector_investments[sector_name]["stocks"][stock_name]["amount"] += stock_amount
+        
+        # Calculate percentages
+        for sector_name, data in sector_investments.items():
+            data["investment_percentage"] = round((data["total_investment"] / total_investment) * 100, 2) if total_investment else 0
+            total_sector_investment = data["total_investment"]
+            for stock_name, stock_data in data["stocks"].items():
+                stock_data["percentage"] = round((stock_data["amount"] / total_sector_investment) * 100, 2) if total_sector_investment else 0
+                stock_data["amount"] = round(stock_data["amount"], 2)
+        
+        # Convert defaultdict to normal dict
+        result = {
+            sector_name: {
+                "total_investment": round(data["total_investment"], 2),
+                "investment_percentage": data["investment_percentage"],
+                "stocks": {stock_name: {"amount": stock_data["amount"], "percentage": stock_data["percentage"]} for stock_name, stock_data in data["stocks"].items()}
+            }
+            for sector_name, data in sector_investments.items()
+        }
+        
+        return {"status": "success", "data": result}
+    
+    except HTTPException as http_err:
+        raise http_err
     except Exception as e:
-        raise HTTPException(status_code=500, detail="An unexpected error occurred while fetching sector allocations.")
+        raise HTTPException(status_code=500, detail=f"An error occurred: {str(e)}")
